@@ -16,6 +16,8 @@
     "@shopify/react-native-skia": "^2.4.18",
     "buffer": "^6.0.3",
     "face-api.js": "^0.22.2",
+    "jpeg-js": "^0.4.4",
+    "pngjs": "^7.0.0",
     "react": "19.2.0",
     "react-native": "0.83.1",
     "react-native-fast-tflite": "^2.0.0",
