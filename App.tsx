@@ -1,70 +1,117 @@
-import React, { useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import {
   ActivityIndicator,
+  Alert,
   Button,
+  Image,
+  ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   useColorScheme,
   View,
-  StatusBar,
-  Image,
 } from 'react-native'
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context'
 import FaceDetection from '@react-native-ml-kit/face-detection'
 import { loadTensorflowModel, type TensorflowModel } from 'react-native-fast-tflite'
 import RNFS from 'react-native-fs'
-import ImageEditor from '@react-native-community/image-editor'
-
-// Pixel decoding for a static image URI
-// Install these (pure JS) decoders:
-//   yarn add jpeg-js pngjs
-// Note: WebP is NOT supported by these decoders. Use PNG/JPG assets for this screen.
-import jpeg from 'jpeg-js'
-import { PNG } from 'pngjs/browser'
-
 import { Buffer } from 'buffer'
+
+// SQLite (bare RN). If you are on Expo, swap this to `expo-sqlite`.
+import SQLite from 'react-native-sqlite-storage'
+
+  // ✅ IMPORTANT: polyfill Buffer for the environment
   ; (globalThis as any).Buffer = (globalThis as any).Buffer || Buffer
+
+import {
+  getMobileFaceNetEmbeddingFromFrame,
+  cropFace112ForDebug,
+  type FaceFrame,
+} from './faceEmbedding.ts'
+
+SQLite.enablePromise(true)
 
 function nowMs(): number {
   const p = (globalThis as any)?.performance
   return typeof p?.now === 'function' ? p.now() : Date.now()
 }
 
+function cosineSimilarity(a: Float32Array, b: Float32Array): number {
+  if (a.length !== b.length) throw new Error(`Embedding length mismatch: ${a.length} vs ${b.length}`)
+  let dot = 0,
+    na = 0,
+    nb = 0
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i],
+      y = b[i]
+    dot += x * y
+    na += x * x
+    nb += y * y
+  }
+  const denom = Math.sqrt(na) * Math.sqrt(nb)
+  return denom === 0 ? 0 : dot / denom
+}
+
 /**
- * Handles both remote URLs and local require() assets.
- * Returns a local file:// URI.
+ * Float32Array <-> base64 helpers for SQLite.
+ * We store embeddings as base64 in TEXT column (portable across iOS/Android).
+ */
+function float32ToBase64(arr: Float32Array): string {
+  const buf = Buffer.from(arr.buffer.slice(arr.byteOffset, arr.byteOffset + arr.byteLength))
+  return buf.toString('base64')
+}
+
+function base64ToFloat32(b64: string): Float32Array {
+  const buf = Buffer.from(b64, 'base64')
+  // Node Buffer is backed by Uint8Array; create a copy aligned to 4 bytes
+  const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+  return new Float32Array(ab)
+}
+
+/**
+ * ✅ FIX: Handles both remote URLs and local require() assets
  */
 async function resolveImageToLocalUri(source: any, tag: string): Promise<string> {
   let uri: string
+
   if (typeof source === 'number') {
+    // It's a local require() asset ID
     const resolved = Image.resolveAssetSource(source)
     uri = resolved.uri
   } else if (typeof source === 'string') {
+    // It's a remote URL
     uri = source
   } else {
     throw new Error(`Unsupported image source type for ${tag}`)
   }
 
-  const isPng = uri.toLowerCase().includes('.png')
-  const isJpg = uri.toLowerCase().includes('.jpg') || uri.toLowerCase().includes('.jpeg')
-  if (!isPng && !isJpg) {
-    throw new Error(
-      `Unsupported image extension for ${tag}. Use .png/.jpg (WebP not supported by the JS decoders).`,
-    )
-  }
-
-  const extension = isPng ? 'png' : 'jpg'
+  const extension = uri.includes('.png') ? 'png' : 'jpg'
   const destPath = `${RNFS.TemporaryDirectoryPath}/img_${tag}_${Date.now()}.${extension}`
 
-  // downloadFile also works for packager-served assets
-  const res = await RNFS.downloadFile({ fromUrl: uri, toFile: destPath }).promise
+  // We use downloadFile even for local assets because in Dev mode
+  // they are served over http from the Metro server.
+  const res = await RNFS.downloadFile({
+    fromUrl: uri,
+    toFile: destPath,
+  }).promise
+
   if (res.statusCode && res.statusCode >= 400) {
     throw new Error(`Failed to resolve image ${tag} (status ${res.statusCode})`)
   }
+
   return `file://${destPath}`
 }
 
-type FaceFrame = { x: number; y: number; width: number; height: number }
+async function saveFileUriToDocuments(fileUri: string, filename: string): Promise<string> {
+  if (!fileUri.startsWith('file://')) {
+    throw new Error(`Expected file:// URI to save, got: ${fileUri}`)
+  }
+  const srcPath = fileUri.replace('file://', '')
+  const destPath = `${RNFS.DocumentDirectoryPath}/${filename}`
+  await RNFS.copyFile(srcPath, destPath)
+  return `file://${destPath}`
+}
 
 async function detectFirstFaceFrame(localFileUri: string): Promise<FaceFrame> {
   const faces = await FaceDetection.detect(localFileUri, {
@@ -79,125 +126,51 @@ async function detectFirstFaceFrame(localFileUri: string): Promise<FaceFrame> {
 }
 
 /**
- * Replicates the Android repo behavior: make the detected face bbox a square.
- * (Repo: Box.toSquareShape() + limitSquare() before cropping.)
+ * DB schema
  */
-function makeSquareFrame(frame: FaceFrame): FaceFrame {
-  const cx = frame.x + frame.width / 2
-  const cy = frame.y + frame.height / 2
-  const size = Math.max(frame.width, frame.height)
-  return { x: cx - size / 2, y: cy - size / 2, width: size, height: size }
+const DB_NAME = 'employees.db'
+const TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS employees (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  embedding_b64 TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+`
+
+type EmployeeRow = { id: number; name: string; embedding_b64: string; created_at: number }
+
+async function openDb() {
+  return SQLite.openDatabase({ name: DB_NAME, location: 'default' })
 }
 
-/**
- * Crop square face and resize to 256x256 (repo input size).
- */
-async function cropAndResize256(localFileUri: string, square: FaceFrame): Promise<string> {
-  const offset = { x: Math.max(0, Math.round(square.x)), y: Math.max(0, Math.round(square.y)) }
-  const size = { width: Math.max(1, Math.round(square.width)), height: Math.max(1, Math.round(square.height)) }
-
-  // ✅ FIX: Extract .uri from the result object
-  const result = await ImageEditor.cropImage(localFileUri, {
-    offset,
-    size,
-    displaySize: { width: 256, height: 256 },
-    resizeMode: 'stretch',
-  })
-
-  const croppedUri = typeof result === 'string' ? result : result.uri;
-
-  if (!croppedUri) throw new Error('ImageEditor.cropImage returned empty uri');
-
-  // Ensure the file:// prefix is present for RNFS
-  return croppedUri.startsWith('file://') ? croppedUri : `file://${croppedUri}`;
+async function initDb() {
+  const db = await openDb()
+  await db.executeSql(TABLE_SQL)
+  return db
 }
 
-type DecodedRGBA = { width: number; height: number; data: Uint8Array }
-
-async function decodeImageFileToRgba(fileUri: any): Promise<DecodedRGBA> {
-  // ✅ FIX: Ensure we are working with a string
-  const uriString = typeof fileUri === 'string' ? fileUri : fileUri?.uri;
-
-  if (!uriString || typeof uriString !== 'string' || !uriString.startsWith('file://')) {
-    throw new Error(`Expected file:// uri string, got: ${JSON.stringify(fileUri)}`);
-  }
-
-  const path = uriString.replace('file://', '')
-  const base64 = await RNFS.readFile(path, 'base64')
-  const buf = Buffer.from(base64, 'base64')
-  const lower = path.toLowerCase()
-
-  // Some RN image pipelines return a temp file without an extension.
-  // Try to detect by magic header first; fall back to extension.
-  const isJpgByMagic = buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xd8
-  const isPngByMagic =
-    buf.length >= 8 &&
-    buf[0] === 0x89 &&
-    buf[1] === 0x50 &&
-    buf[2] === 0x4e &&
-    buf[3] === 0x47 &&
-    buf[4] === 0x0d &&
-    buf[5] === 0x0a &&
-    buf[6] === 0x1a &&
-    buf[7] === 0x0a
-
-  const isJpgByExt = lower.endsWith('.jpg') || lower.endsWith('.jpeg')
-  const isPngByExt = lower.endsWith('.png')
-
-  if (isJpgByMagic || isJpgByExt) {
-    const decoded = jpeg.decode(buf, { useTArray: true }) as unknown as {
-      width: number
-      height: number
-      data: Uint8Array
-    }
-    return { width: decoded.width, height: decoded.height, data: decoded.data }
-  }
-
-  if (isPngByMagic || isPngByExt) {
-    const decoded = PNG.sync.read(buf)
-    // decoded.data is Buffer/Uint8Array RGBA
-    return { width: decoded.width, height: decoded.height, data: decoded.data as unknown as Uint8Array }
-  }
-
-  throw new Error(`Unsupported image type: ${path}`)
+async function upsertEmployee(db: any, name: string, embedding: Float32Array) {
+  const embedding_b64 = float32ToBase64(embedding)
+  const created_at = Date.now()
+  // Insert or replace on name uniqueness
+  await db.executeSql(
+    `INSERT INTO employees(name, embedding_b64, created_at)
+     VALUES(?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET embedding_b64=excluded.embedding_b64, created_at=excluded.created_at;`,
+    [name.trim(), embedding_b64, created_at],
+  )
 }
 
-/**
- * Repo equivalent:
- * - resize to 256x256
- * - normalize RGB by /255
- * - NHWC float32
- */
-function rgba256ToRgbFloatNHWC01(rgba: Uint8Array): Float32Array {
-  // rgba is length 256*256*4
-  if (rgba.length !== 256 * 256 * 4) {
-    throw new Error(`Expected RGBA length ${256 * 256 * 4}, got ${rgba.length}`)
-  }
-  const out = new Float32Array(256 * 256 * 3)
-  let j = 0
-  for (let i = 0; i < rgba.length; i += 4) {
-    // RGBA -> RGB
-    out[j++] = rgba[i] / 255.0
-    out[j++] = rgba[i + 1] / 255.0
-    out[j++] = rgba[i + 2] / 255.0
-  }
-  return out
+async function getAllEmployees(db: any): Promise<EmployeeRow[]> {
+  const [res] = await db.executeSql(`SELECT id, name, embedding_b64, created_at FROM employees ORDER BY id ASC;`)
+  const rows: EmployeeRow[] = []
+  for (let i = 0; i < res.rows.length; i++) rows.push(res.rows.item(i))
+  return rows
 }
 
-/**
- * Repo score combine:
- * score = Σ_i ( abs(clss_pred[i]) * leaf_node_mask[i] )
- * live if score < 0.2
- */
-function computeAntiSpoofScore(clssPred: Float32Array, leafMask: Float32Array): number {
-  if (clssPred.length !== leafMask.length) {
-    throw new Error(`Output length mismatch: ${clssPred.length} vs ${leafMask.length}`)
-  }
-  let s = 0
-  for (let i = 0; i < clssPred.length; i++) {
-    s += Math.abs(clssPred[i]) * leafMask[i]
-  }
-  return s
+async function deleteAllEmployees(db: any) {
+  await db.executeSql(`DELETE FROM employees;`)
 }
 
 function App() {
@@ -214,77 +187,114 @@ function AppContent() {
   const insets = useSafeAreaInsets()
   const [loading, setLoading] = useState(false)
   const [output, setOutput] = useState('')
-  const modelRef = useRef<TensorflowModel | null>(null)
+  const [employeeName, setEmployeeName] = useState('')
+  const [dbReady, setDbReady] = useState(false)
 
-  const getAntiSpoofModel = async (): Promise<TensorflowModel> => {
+  const modelRef = useRef<TensorflowModel | null>(null)
+  const dbRef = useRef<any>(null)
+
+  const getModel = async (): Promise<TensorflowModel> => {
     if (modelRef.current) return modelRef.current
-    // Put FaceAntiSpoofing.tflite under ./model/
-    modelRef.current = await loadTensorflowModel(require('./model/FaceAntiSpoofing.tflite'))
+    modelRef.current = await loadTensorflowModel(require('./model/mobilefacenet.tflite'))
     return modelRef.current
   }
 
-  const handleRunSingleImage = async () => {
-    // Use PNG/JPG here.
-    const source = require('./assets/ana.jpeg')
-    const SPOOF_THRESHOLD = 0.2
+  useEffect(() => {
+    ; (async () => {
+      try {
+        dbRef.current = await initDb()
+        setDbReady(true)
+      } catch (e: any) {
+        console.error(e)
+        setOutput(`DB init error: ${e?.message ?? String(e)}`)
+      }
+    })()
+  }, [])
 
+  /**
+   * 1) New employee registration
+   * - input: name + image
+   * - output: embedding saved to SQLite
+   */
+  const registerEmployee = async (name: string, imageSource: any) => {
+    const trimmed = name.trim()
+    if (!trimmed) throw new Error('Employee name is required')
+    if (!dbRef.current) throw new Error('DB not ready')
+
+    const model = await getModel()
+
+    const img = await resolveImageToLocalUri(imageSource, `reg_${trimmed}`)
+    const frame = await detectFirstFaceFrame(img)
+
+    // Optional: debug crop
+    try {
+      const crop = await cropFace112ForDebug(img, frame)
+      if (crop) await saveFileUriToDocuments(crop, `reg_crop_${trimmed}_${Date.now()}.jpg`)
+    } catch {
+      // ignore
+    }
+
+    const emb = await getMobileFaceNetEmbeddingFromFrame(img, frame, model)
+    await upsertEmployee(dbRef.current, trimmed, emb)
+
+    return { name: trimmed, embeddingLength: emb.length }
+  }
+
+  /**
+   * 2) Employee clock-in
+   * - input: image
+   * - output: best matched name + confidence score
+   */
+  const clockIn = async (imageSource: any, threshold = 0.6) => {
+    if (!dbRef.current) throw new Error('DB not ready')
+
+    const model = await getModel()
+
+    const img = await resolveImageToLocalUri(imageSource, `clockin_${Date.now()}`)
+    const frame = await detectFirstFaceFrame(img)
+
+    const probe = await getMobileFaceNetEmbeddingFromFrame(img, frame, model)
+
+    const employees = await getAllEmployees(dbRef.current)
+    if (employees.length === 0) throw new Error('No employees registered in DB')
+
+    let bestName: string | null = null
+    let bestScore = -1
+
+    for (const emp of employees) {
+      const galleryEmb = base64ToFloat32(emp.embedding_b64)
+      const score = cosineSimilarity(probe, galleryEmb)
+      if (score > bestScore) {
+        bestScore = score
+        bestName = emp.name
+      }
+    }
+
+    const matched = bestScore >= threshold
+    return {
+      matched,
+      name: matched ? bestName : null,
+      score: bestScore,
+      threshold,
+      comparedAgainst: employees.length,
+    }
+  }
+
+  // --- Demo UI wiring (swap the imageSource for camera frames in your real app) ---
+  const demoRegister = async () => {
+    // Replace with an image picker / camera capture in your app
+    const source = require('./assets/mena.jpeg')
     try {
       setLoading(true)
       setOutput('')
-
-      const img = await resolveImageToLocalUri(source, 'img')
-
       const t0 = nowMs()
-      const frame = await detectFirstFaceFrame(img)
+      const res = await registerEmployee(employeeName, source)
       const t1 = nowMs()
-
-      const square = makeSquareFrame(frame)
-      const face256 = await cropAndResize256(img, square)
-
-      // Decode 256x256 RGBA
-      const decoded = await decodeImageFileToRgba(face256)
-      if (decoded.width !== 256 || decoded.height !== 256) {
-        throw new Error(`Expected 256x256 after crop+resize, got ${decoded.width}x${decoded.height}`)
-      }
-
-      const input = rgba256ToRgbFloatNHWC01(decoded.data)
-
-      const model = await getAntiSpoofModel()
-      const t2 = nowMs()
-
-      // IMPORTANT:
-      // This model has TWO outputs. react-native-fast-tflite returns outputs in the model's output order.
-      // In the original Android code, they map outputs by tensor names "Identity" and "Identity_1".
-      const outputs = await model.run([input])
-
-      // Most TFLite wrappers return raw typed arrays OR ArrayBuffers.
-      // We normalize to Float32Array.
-      const o0 = outputs?.[0]
-      const o1 = outputs?.[1]
-      if (!o0 || !o1) {
-        throw new Error(
-          `Model did not return 2 outputs. Got ${Array.isArray(outputs) ? outputs.length : 'non-array'}.`,
-        )
-      }
-
-      const clssPred = o0 instanceof Float32Array ? o0 : new Float32Array(o0)
-      const leafMask = o1 instanceof Float32Array ? o1 : new Float32Array(o1)
-
-      const score = computeAntiSpoofScore(clssPred, leafMask)
-      const t3 = nowMs()
-
-      const verdict = score < SPOOF_THRESHOLD ? '✅ LIVE' : '❌ SPOOF'
-
       setOutput(
         [
-          `Face detected.`,
-          `Anti-spoof score: ${score.toFixed(6)} (threshold ${SPOOF_THRESHOLD})`,
-          `Decision: ${verdict}`,
-          '',
-          `Detection time: ${(t1 - t0).toFixed(2)} ms`,
-          `Inference time: ${(t3 - t2).toFixed(2)} ms`,
-          '',
-          `Debug: face256 uri: ${face256}`,
+          `✅ Registered: ${res.name}`,
+          `Embedding length: ${res.embeddingLength}`,
+          `Time: ${(t1 - t0).toFixed(2)} ms`,
         ].join('\n'),
       )
     } catch (e: any) {
@@ -295,22 +305,135 @@ function AppContent() {
     }
   }
 
+  const demoClockIn = async () => {
+    // Replace with an image picker / camera capture in your app
+    const source = require('./assets/ana.jpeg')
+    const THRESHOLD = 0.6
+
+    try {
+      setLoading(true)
+      setOutput('')
+      const t0 = nowMs()
+      const res = await clockIn(source, THRESHOLD)
+      const t1 = nowMs()
+
+      setOutput(
+        [
+          `Best match: ${res.name ?? 'UNKNOWN'}`,
+          `Confidence (cosine): ${res.score.toFixed(6)}`,
+          `Threshold: ${res.threshold.toFixed(2)}`,
+          `Decision: ${res.matched ? '✅ MATCH' : '❌ NO MATCH'}`,
+          `Compared against: ${res.comparedAgainst} employees`,
+          `Time: ${(t1 - t0).toFixed(2)} ms`,
+        ].join('\n'),
+      )
+    } catch (e: any) {
+      console.error(e)
+      setOutput(`Error: ${e?.message ?? String(e)}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const showAllEmployees = async () => {
+    try {
+      if (!dbRef.current) throw new Error('DB not ready')
+      const rows = await getAllEmployees(dbRef.current)
+      setOutput(
+        rows.length === 0
+          ? 'No employees in DB'
+          : rows
+            .map((r) => `• #${r.id}  ${r.name}  (saved: ${new Date(r.created_at).toLocaleString()})`)
+            .join('\n'),
+      )
+    } catch (e: any) {
+      console.error(e)
+      setOutput(`Error: ${e?.message ?? String(e)}`)
+    }
+  }
+
+  const clearDb = async () => {
+    try {
+      if (!dbRef.current) throw new Error('DB not ready')
+      await deleteAllEmployees(dbRef.current)
+      setOutput('✅ Deleted all employees')
+    } catch (e: any) {
+      console.error(e)
+      setOutput(`Error: ${e?.message ?? String(e)}`)
+    }
+  }
+
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      <View style={styles.buttonWrap}>
-        <Button title="Run Anti-Spoof on 1 image" onPress={handleRunSingleImage} disabled={loading} />
-      </View>
-      {loading && <ActivityIndicator size="small" style={styles.loader} />}
-      {!!output && <Text style={styles.result}>{output}</Text>}
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <Text style={styles.title}>Offline Face Recognition (SQLite)</Text>
+
+        <Text style={styles.label}>Employee name (for registration)</Text>
+        <TextInput
+          value={employeeName}
+          onChangeText={setEmployeeName}
+          placeholder="e.g., Omar"
+          style={styles.input}
+          autoCapitalize="words"
+        />
+
+        <View style={styles.buttonWrap}>
+          <Button title={dbReady ? '1) Register employee (demo image)' : 'DB loading...'} onPress={demoRegister} disabled={loading || !dbReady} />
+        </View>
+        <View style={styles.buttonWrap}>
+          <Button title={dbReady ? '2) Clock-in (demo image)' : 'DB loading...'} onPress={demoClockIn} disabled={loading || !dbReady} />
+        </View>
+
+        <View style={styles.row}>
+          <View style={styles.rowBtn}>
+            <Button title="List employees" onPress={showAllEmployees} disabled={loading || !dbReady} />
+          </View>
+          <View style={styles.rowBtn}>
+            <Button
+              title="Clear DB"
+              onPress={() =>
+                Alert.alert('Confirm', 'Delete all employees?', [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Delete', style: 'destructive', onPress: clearDb },
+                ])
+              }
+              disabled={loading || !dbReady}
+            />
+          </View>
+        </View>
+
+        {loading && <ActivityIndicator size="small" style={styles.loader} />}
+        {!!output && <Text style={styles.result}>{output}</Text>}
+
+        <Text style={styles.note}>
+          Notes:\n• Registration stores a single embedding per employee name (upsert).\n• Clock-in computes cosine similarity against all stored embeddings and returns the best match + score.\n• Replace the demo `require(...)` images with a real camera/picker image URI.
+        </Text>
+      </ScrollView>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 24, backgroundColor: '#fff' },
-  buttonWrap: { marginTop: 8, marginBottom: 16 },
-  loader: { marginVertical: 8 },
-  result: { fontSize: 12, fontWeight: '600', color: '#333', lineHeight: 18 },
+  container: { flex: 1, backgroundColor: '#fff' },
+  content: { padding: 24 },
+  title: { fontSize: 18, fontWeight: '800', marginBottom: 16, color: '#111' },
+  label: { fontSize: 12, fontWeight: '700', color: '#333', marginBottom: 8 },
+  input: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+    fontSize: 14,
+    color: '#111',
+  },
+  buttonWrap: { marginTop: 8, marginBottom: 8 },
+  row: { flexDirection: 'row', gap: 12, marginTop: 8, marginBottom: 8 },
+  rowBtn: { flex: 1 },
+  loader: { marginVertical: 12 },
+  result: { marginTop: 12, fontSize: 12, fontWeight: '600', color: '#333', lineHeight: 18 },
+  note: { marginTop: 16, fontSize: 12, color: '#444', lineHeight: 18 },
 })
 
 export default App
