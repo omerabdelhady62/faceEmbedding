@@ -1,8 +1,11 @@
 import ImageEditor from '@react-native-community/image-editor';
 import RNFS from 'react-native-fs';
 import { Skia } from '@shopify/react-native-skia';
+import FaceDetection from '@react-native-ml-kit/face-detection';
 import type { TensorflowModel } from 'react-native-fast-tflite';
 import { Buffer } from 'buffer';
+import { base64ToFloat32, type EmployeeRow } from './db';
+import type { AnyMlKitFrame } from './antiSpoof';
 
 export type FaceFrame = {
   top: number;
@@ -147,4 +150,75 @@ export async function cropFace112ForDebug(
   frame: FaceFrame,
 ): Promise<string> {
   return cropFace112(localFileUri, frame);
+}
+
+function toTLWH(frame: AnyMlKitFrame): FaceFrame {
+  const anyF: any = frame;
+  const left = typeof anyF.left === 'number' ? anyF.left : anyF.x;
+  const top = typeof anyF.top === 'number' ? anyF.top : anyF.y;
+  if (![left, top, anyF.width, anyF.height].every((v) => typeof v === 'number')) {
+    throw new Error(`Invalid face frame shape: ${JSON.stringify(frame)}`);
+  }
+  return { left, top, width: anyF.width, height: anyF.height };
+}
+
+/**
+ * High-level API: detect face in image and return L2-normalized embedding.
+ */
+export async function getEmbeddings(
+  localFileUri: string,
+  model: TensorflowModel,
+): Promise<Float32Array> {
+  const faces = await FaceDetection.detect(localFileUri, {
+    landmarkMode: 'all',
+    trackingEnabled: false,
+    performanceMode: 'fast',
+  });
+  if (!faces || faces.length === 0) throw new Error(`No face detected: ${localFileUri}`);
+  const frame = faces[0]?.frame;
+  if (!frame) throw new Error(`Face bbox missing: ${localFileUri}`);
+
+  const frameTLWH = toTLWH(frame as AnyMlKitFrame);
+  return getMobileFaceNetEmbeddingFromFrame(localFileUri, frameTLWH, model);
+}
+
+function cosineSimilarity(a: Float32Array, b: Float32Array): number {
+  if (a.length !== b.length) throw new Error(`Embedding length mismatch: ${a.length} vs ${b.length}`);
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i], y = b[i];
+    dot += x * y;
+    na += x * x;
+    nb += y * y;
+  }
+  const denom = Math.sqrt(na) * Math.sqrt(nb);
+  return denom === 0 ? 0 : dot / denom;
+}
+
+/**
+ * Match an embedding against all employees. Returns matched employee_id or null.
+ */
+export function matchEmployee(
+  probe: Float32Array,
+  employees: EmployeeRow[],
+  threshold = 0.6,
+): { employeeId: string | null; score: number; matched: boolean } {
+  let bestEmployeeId: string | null = null;
+  let bestScore = -1;
+
+  for (const emp of employees) {
+    const galleryEmb = base64ToFloat32(emp.embedding_b64);
+    const score = cosineSimilarity(probe, galleryEmb);
+    if (score > bestScore) {
+      bestScore = score;
+      bestEmployeeId = emp.employee_id;
+    }
+  }
+
+  const matched = bestScore >= threshold;
+  return {
+    employeeId: matched ? bestEmployeeId : null,
+    score: bestScore,
+    matched,
+  };
 }

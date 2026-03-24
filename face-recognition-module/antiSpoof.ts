@@ -212,3 +212,19 @@ export async function runAntiSpoofOnImage(opts: {
     returnDebug: opts.returnDebug,
   })
 }
+
+/**
+ * High-level API: detect face + check anti-spoof, returns true if live.
+ */
+export async function checkAntiSpoof(
+  localFileUri: string,
+  model: TensorflowModel,
+  threshold?: number,
+): Promise<{ isLive: boolean; score: number; threshold: number }> {
+  const result = await runAntiSpoofOnImage({
+    localFileUri,
+    model,
+    threshold,
+  })
+  return { isLive: result.isLive, score: result.score, threshold: result.threshold }
+}
