@@ -24,13 +24,22 @@ import {
   initDbs,
   fetchDb,
   deleteDb,
+  createEmployeesDb,
   type AppDbs,
   type DbName,
+  type EmbeddingEntry,
 } from './face-recognition-module'
 
 function nowMs(): number {
   const p = (globalThis as any)?.performance
   return typeof p?.now === 'function' ? p.now() : Date.now()
+}
+
+function formatTimeDiff(seconds: number): string {
+  if (seconds < 60) return `${seconds}s ago`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`
+  return `${Math.floor(seconds / 86400)}d ago`
 }
 
 // --- App ---
@@ -90,7 +99,7 @@ function AppContent() {
       setOutput('')
       if (!dbsRef.current) throw new Error('DB not ready')
       const t0 = nowMs()
-      const success = await register(source, employeeId, Date.now(), await getEmbeddingModel(), dbsRef.current)
+      const success = await register(source, employeeId, await getEmbeddingModel(), dbsRef.current)
       const t1 = nowMs()
       setOutput(
         success
@@ -115,7 +124,6 @@ function AppContent() {
       const t0 = nowMs()
       const res = await clockInOut(
         source,
-        Date.now(),
         operation,
         await getEmbeddingModel(),
         await getAntiSpoofModel(),
@@ -151,6 +159,32 @@ function AppContent() {
     }
   }
 
+  // --- Test createEmployeesDb ---
+  const demoCreateEmployeesDb = async () => {
+    try {
+      setLoading(true)
+      setOutput('')
+      const EMBED_SIZE = 192
+      const entries: EmbeddingEntry[] = [
+        { employee_id: 'EMP001', embedding: Float32Array.from({ length: EMBED_SIZE }, (_, i) => Math.sin(i * 0.1)) },
+        { employee_id: 'EMP002', embedding: Float32Array.from({ length: EMBED_SIZE }, (_, i) => Math.cos(i * 0.1)) },
+        { employee_id: 'EMP003', embedding: Float32Array.from({ length: EMBED_SIZE }, (_, i) => Math.sin(i * 0.2 + 1)) },
+        { employee_id: 'EMP004', embedding: Float32Array.from({ length: EMBED_SIZE }, (_, i) => Math.cos(i * 0.2 + 1)) },
+      ]
+      const ok = await createEmployeesDb(entries)
+      if (ok) {
+        setOutput(`Created employees DB with ${entries.length} dummy entries:\n${entries.map(e => e.employee_id).join(', ')}`)
+      } else {
+        setOutput('Failed to create employees DB')
+      }
+    } catch (e: any) {
+      console.error(e)
+      setOutput(`Error: ${e?.message ?? String(e)}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   // --- Utils ---
   const handleFetchDb = async (dbName: DbName) => {
     try {
@@ -174,7 +208,8 @@ function AppContent() {
             .map((r) => {
               const live = r.is_live === 1 ? 'LIVE' : 'SPOOF'
               const matched = r.matched === 1 ? `MATCH (${r.employee_id ?? 'UNKNOWN'})` : 'NO MATCH'
-              return `#${r.id}  ${r.operation}  ${live}  spoof=${Number(r.anti_spoof_score).toFixed(4)}  ${matched}  cosine=${r.match_score == null ? '-' : Number(r.match_score).toFixed(4)}  (${new Date(r.created_at).toLocaleString()})`
+              const ago = r.time_diff_seconds != null ? formatTimeDiff(r.time_diff_seconds) : ''
+              return `#${r.id}  ${r.operation}  ${live}  spoof=${Number(r.anti_spoof_score).toFixed(4)}  ${matched}  cosine=${r.match_score == null ? '-' : Number(r.match_score).toFixed(4)}  ${ago}`
             })
             .join('\n'),
         )
@@ -245,6 +280,17 @@ function AppContent() {
             title={dbReady ? `${operation === 'clockin' ? 'Clock In' : 'Clock Out'} (demo image)` : 'DB loading...'}
             onPress={demoClockInOut}
             disabled={loading || !dbReady}
+          />
+        </View>
+
+        {/* --- Test createEmployeesDb --- */}
+        <Text style={styles.sectionTitle}>Test DB</Text>
+        <View style={styles.buttonWrap}>
+          <Button
+            title="Create Dummy Employees DB (4 entries)"
+            onPress={demoCreateEmployeesDb}
+            disabled={loading}
+            color="#666"
           />
         </View>
 

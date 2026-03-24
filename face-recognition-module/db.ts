@@ -46,6 +46,7 @@ export type OperationRow = {
   match_score: number | null
   match_threshold: number | null
   created_at: number
+  time_diff_seconds: number
 }
 
 export type AppDbs = { employeesDb: any; operationsDb: any }
@@ -79,16 +80,42 @@ export async function saveEmbedding(
   db: any,
   employeeId: string,
   embedding: Float32Array,
-  time: number,
 ): Promise<boolean> {
   try {
     const embedding_b64 = float32ToBase64(embedding)
+    const now = Date.now()
     await db.executeSql(
       `INSERT INTO employees(employee_id, embedding_b64, created_at)
        VALUES(?, ?, ?)
        ON CONFLICT(employee_id) DO UPDATE SET embedding_b64=excluded.embedding_b64, created_at=excluded.created_at;`,
-      [employeeId.trim(), embedding_b64, time],
+      [employeeId.trim(), embedding_b64, now],
     )
+    return true
+  } catch {
+    return false
+  }
+}
+
+export type EmbeddingEntry = {
+  employee_id: string
+  embedding: Float32Array
+}
+
+export async function createEmployeesDb(entries: EmbeddingEntry[]): Promise<boolean> {
+  try {
+    const db = await SQLite.openDatabase({ name: EMPLOYEES_DB_NAME, location: 'default' })
+    await db.executeSql(`DROP TABLE IF EXISTS employees;`)
+    await db.executeSql(EMPLOYEES_TABLE_SQL)
+    const now = Date.now()
+    for (const entry of entries) {
+      const b64 = float32ToBase64(entry.embedding)
+      await db.executeSql(
+        `INSERT INTO employees(employee_id, embedding_b64, created_at)
+         VALUES(?, ?, ?)
+         ON CONFLICT(employee_id) DO UPDATE SET embedding_b64=excluded.embedding_b64, created_at=excluded.created_at;`,
+        [entry.employee_id.trim(), b64, now],
+      )
+    }
     return true
   } catch {
     return false
@@ -116,10 +143,10 @@ export async function saveOperation(
     matched: boolean
     match_score: number | null
     match_threshold: number | null
-    time: number
   },
 ): Promise<boolean> {
   try {
+    const now = Date.now()
     await db.executeSql(
       `INSERT INTO operations (employee_id, operation, is_live, anti_spoof_score, matched, match_score, match_threshold, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
@@ -131,7 +158,7 @@ export async function saveOperation(
         row.matched ? 1 : 0,
         row.match_score ?? null,
         row.match_threshold ?? null,
-        row.time,
+        now,
       ],
     )
     return true
@@ -141,12 +168,14 @@ export async function saveOperation(
 }
 
 export async function getAllOperations(db: any, limit = 50): Promise<OperationRow[]> {
+  const now = Date.now()
   const [res] = await db.executeSql(
-    `SELECT id, employee_id, operation, is_live, anti_spoof_score, matched, match_score, match_threshold, created_at
+    `SELECT id, employee_id, operation, is_live, anti_spoof_score, matched, match_score, match_threshold, created_at,
+            CAST((? - created_at) / 1000 AS INTEGER) AS time_diff_seconds
      FROM operations
      ORDER BY id DESC
      LIMIT ?;`,
-    [limit],
+    [now, limit],
   )
   const rows: OperationRow[] = []
   for (let i = 0; i < res.rows.length; i++) rows.push(res.rows.item(i))

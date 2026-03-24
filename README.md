@@ -106,7 +106,7 @@ Register an employee's face.
 ```ts
 import { register } from './face-recognition-module'
 
-const success = await register(imageSource, employeeId, time, embedModel, dbs)
+const success = await register(imageSource, employeeId, embedModel, dbs)
 ```
 
 ```
@@ -119,7 +119,6 @@ const success = await register(imageSource, employeeId, time, embedModel, dbs)
 │  imageSource    any         require('./photo.jpg')       │
 │                             or 'file:///path/to/img'    │
 │  employeeId     string      e.g. '1001'                 │
-│  time           number      Date.now() (ms timestamp)   │
 │  embedModel     TFLiteModel loaded MobileFaceNet model  │
 │  dbs            AppDbs      from initDbs()              │
 │                                                         │
@@ -133,6 +132,8 @@ const success = await register(imageSource, employeeId, time, embedModel, dbs)
 │  ──────                                                 │
 │  - 'Employee ID is required' (empty string)             │
 │  - 'No face detected' (no face in image)                │
+│                                                         │
+│  NOTE: timestamp is captured automatically at save time │
 │                                                         │
 │  WHAT IT DOES                                           │
 │  ────────────                                           │
@@ -152,7 +153,6 @@ import { clockInOut } from './face-recognition-module'
 
 const result = await clockInOut(
   imageSource,             // image
-  Date.now(),              // time
   'clockin',               // or 'clockout'
   embedModel,              // loaded model
   antiSpoofModel,          // loaded model
@@ -169,7 +169,6 @@ const result = await clockInOut(
 │  INPUTS                                                       │
 │  ──────                                                       │
 │  imageSource      any                  image to process       │
-│  time             number               Date.now()             │
 │  operation        'clockin'|'clockout' operation type         │
 │  embedModel       TFLiteModel          MobileFaceNet model    │
 │  antiSpoofModel   TFLiteModel          anti-spoof model       │
@@ -196,7 +195,7 @@ const result = await clockInOut(
 │  spoofOk=true, matchedEmployeeId=null → live but no match     │
 │  spoofOk=true, matchedEmployeeId='1001' → success!            │
 │                                                               │
-│  NOTE: every attempt is auto-saved to operations.db           │
+│  NOTE: timestamp + operation auto-saved to operations.db      │
 │                                                               │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -236,11 +235,13 @@ const result = await fetchDb(dbs, 'employees')   // or 'operations'
 │    └──────────────────────────────────────────┘                │
 │                                                                │
 │    if dbName='operations' → OperationRow[]                     │
-│    ┌──────────────────────────────────────────┐                │
-│    │ { id, employee_id, operation, is_live,   │                │
-│    │   anti_spoof_score, matched, match_score,│                │
-│    │   match_threshold, created_at }          │                │
-│    └──────────────────────────────────────────┘                │
+│    ┌──────────────────────────────────────────────┐            │
+│    │ { id, employee_id, operation, is_live,       │            │
+│    │   anti_spoof_score, matched, match_score,    │            │
+│    │   match_threshold, created_at,               │            │
+│    │   time_diff_seconds }                        │            │
+│    └──────────────────────────────────────────────┘            │
+│    time_diff_seconds = seconds elapsed since created_at        │
 │                                                                │
 └────────────────────────────────────────────────────────────────┘
 ```
@@ -278,16 +279,55 @@ const success = await deleteDb(dbs, 'employees')   // or 'operations'
 
 ---
 
-### 3.6 Quick Reference
+### 3.6 `createEmployeesDb()`
+
+Create a fresh employees database from a list of embeddings (drops existing data).
+
+```ts
+import { createEmployeesDb, type EmbeddingEntry } from './face-recognition-module'
+
+const entries: EmbeddingEntry[] = [
+  { employee_id: '1001', embedding: embedding1 },
+  { employee_id: '1002', embedding: embedding2 },
+]
+const success = await createEmployeesDb(entries)
+```
 
 ```
-FUNCTION          INPUT                                  OUTPUT
-─────────────     ─────────────────────────────────────  ──────────────────────────
-initDbs()         (none)                                 AppDbs
-register()        image, employeeId, time, model, dbs    boolean
-clockInOut()      image, time, op, 2 models, dbs, opts?  ClockInOutResult
-fetchDb()         dbs, dbName                            rows[] | -1
-deleteDb()        dbs, dbName                            boolean
+┌──────────────────────────────────────────────────────────┐
+│  createEmployeesDb()                                     │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  INPUTS                                                  │
+│  ──────                                                  │
+│  entries    EmbeddingEntry[]                              │
+│    { employee_id: string, embedding: Float32Array }      │
+│                                                          │
+│  OUTPUT                                                  │
+│  ──────                                                  │
+│  Promise<boolean>                                        │
+│    true  → db created and all entries saved               │
+│    false → failed                                        │
+│                                                          │
+│  NOTE: drops and recreates the employees table            │
+│  NOTE: does NOT require initDbs() — opens db internally  │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 3.7 Quick Reference
+
+```
+FUNCTION              INPUT                                  OUTPUT
+─────────────────     ─────────────────────────────────────  ──────────────────────────
+initDbs()             (none)                                 AppDbs
+register()            image, employeeId, model, dbs          boolean
+clockInOut()          image, op, 2 models, dbs, opts?        ClockInOutResult
+createEmployeesDb()   EmbeddingEntry[]                       boolean
+fetchDb()             dbs, dbName                            rows[] | -1
+deleteDb()            dbs, dbName                            boolean
 ```
 
 ---

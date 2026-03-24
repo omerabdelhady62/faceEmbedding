@@ -15,7 +15,6 @@ export type ClockInOutResult = {
 export async function register(
   imageSource: any,
   employeeId: string,
-  time: number,
   embedModel: TensorflowModel,
   dbs: AppDbs,
 ): Promise<boolean> {
@@ -24,14 +23,13 @@ export async function register(
 
   const img = await resolveImageToLocalUri(imageSource, `reg_${trimmed}`)
   const embedding = await getEmbeddings(img, embedModel)
-  const saved = await saveEmbedding(dbs.employeesDb, trimmed, embedding, time)
+  const saved = await saveEmbedding(dbs.employeesDb, trimmed, embedding)
   // TODO: save_embeddings_to_cloud() --> omar
   return saved
 }
 
 export async function clockInOut(
   imageSource: any,
-  time: number,
   operation: 'clockin' | 'clockout',
   embedModel: TensorflowModel,
   antiSpoofModel: TensorflowModel,
@@ -45,54 +43,54 @@ export async function clockInOut(
 
   // 1. Get embeddings
   let embedding: Float32Array
-  try {
-    embedding = await getEmbeddings(img, embedModel)
-  } catch {
-    await saveOperation(dbs.operationsDb, {
-      employee_id: null,
-      operation,
-      is_live: false,
-      anti_spoof_score: -1,
-      matched: false,
-      match_score: null,
-      match_threshold: matchThreshold,
-      time,
-    })
-    return { embeddingsOk: false, spoofOk: false, matchedEmployeeId: null, antiSpoofScore: -1, matchScore: -1 }
-  }
+  // try {
+  embedding = await getEmbeddings(img, embedModel)
+  // } catch {
+  //   await saveOperation(dbs.operationsDb, {
+  //     employee_id: null,
+  //     operation,
+  //     is_live: false,
+  //     anti_spoof_score: -1,
+  //     matched: false,
+  //     match_score: null,
+  //     match_threshold: matchThreshold,
+  //     time,
+  //   })
+  //   return { embeddingsOk: false, spoofOk: false, matchedEmployeeId: null, antiSpoofScore: -1, matchScore: -1 }
+  // }
 
   // 2. Check anti-spoof
   const spoof = await checkAntiSpoof(img, antiSpoofModel, liveThreshold)
 
-  if (!spoof.isLive) {
-    await saveOperation(dbs.operationsDb, {
-      employee_id: null,
-      operation,
-      is_live: false,
-      anti_spoof_score: spoof.score,
-      matched: false,
-      match_score: null,
-      match_threshold: matchThreshold,
-      time,
-    })
-    return { embeddingsOk: true, spoofOk: false, matchedEmployeeId: null, antiSpoofScore: spoof.score, matchScore: -1 }
-  }
+  // if (!spoof.isLive) {
+  //   await saveOperation(dbs.operationsDb, {
+  //     employee_id: null,
+  //     operation,
+  //     is_live: false,
+  //     anti_spoof_score: spoof.score,
+  //     matched: false,
+  //     match_score: null,
+  //     match_threshold: matchThreshold,
+  //     time,
+  //   })
+  //   return { embeddingsOk: true, spoofOk: false, matchedEmployeeId: null, antiSpoofScore: spoof.score, matchScore: -1 }
+  // }
 
   // 3. Match employee
   const employees = await getAllEmployees(dbs.employeesDb)
-  if (employees.length === 0) {
-    await saveOperation(dbs.operationsDb, {
-      employee_id: null,
-      operation,
-      is_live: true,
-      anti_spoof_score: spoof.score,
-      matched: false,
-      match_score: null,
-      match_threshold: matchThreshold,
-      time,
-    })
-    return { embeddingsOk: true, spoofOk: true, matchedEmployeeId: null, antiSpoofScore: spoof.score, matchScore: -1 }
-  }
+  // if (employees.length === 0) {
+  //   await saveOperation(dbs.operationsDb, {
+  //     employee_id: null,
+  //     operation,
+  //     is_live: true,
+  //     anti_spoof_score: spoof.score,
+  //     matched: false,
+  //     match_score: null,
+  //     match_threshold: matchThreshold,
+  //     time,
+  //   })
+  //   return { embeddingsOk: true, spoofOk: true, matchedEmployeeId: null, antiSpoofScore: spoof.score, matchScore: -1 }
+  // }
 
   const match = matchEmployee(embedding, employees, matchThreshold)
 
@@ -105,7 +103,6 @@ export async function clockInOut(
     matched: match.matched,
     match_score: match.score,
     match_threshold: matchThreshold,
-    time,
   })
 
   return {

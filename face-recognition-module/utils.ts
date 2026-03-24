@@ -4,6 +4,10 @@ import { fetchDb, deleteDb, type AppDbs, type DbName } from './db'
 
 export { fetchDb, deleteDb, type DbName }
 
+export function getTime(): number {
+  return Date.now()
+}
+
 export async function resolveImageToLocalUri(source: any, tag: string): Promise<string> {
   let uri: string
 
