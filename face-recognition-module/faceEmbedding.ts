@@ -202,8 +202,9 @@ export function matchEmployee(
   probe: Float32Array,
   employees: EmployeeRow[],
   threshold = 0.6,
-): { employeeId: string | null; score: number; matched: boolean } {
+): { employeeId: string | null; employeeName: string | null; score: number; matched: boolean } {
   let bestEmployeeId: string | null = null;
+  let bestEmployeeName: string | null = null;
   let bestScore = -1;
 
   for (const emp of employees) {
@@ -212,12 +213,14 @@ export function matchEmployee(
     if (score > bestScore) {
       bestScore = score;
       bestEmployeeId = emp.employee_id;
+      bestEmployeeName = emp.employee_name;
     }
   }
 
   const matched = bestScore >= threshold;
   return {
     employeeId: matched ? bestEmployeeId : null,
+    employeeName: matched ? bestEmployeeName : null,
     score: bestScore,
     matched,
   };

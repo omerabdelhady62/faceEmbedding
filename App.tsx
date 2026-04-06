@@ -60,6 +60,7 @@ function AppContent() {
   const [loading, setLoading] = useState(false)
   const [output, setOutput] = useState('')
   const [employeeId, setEmployeeId] = useState('')
+  const [employeeName, setEmployeeName] = useState('')
   const [operation, setOperation] = useState<'clockin' | 'clockout'>('clockin')
   const [dbReady, setDbReady] = useState(false)
 
@@ -99,11 +100,11 @@ function AppContent() {
       setOutput('')
       if (!dbsRef.current) throw new Error('DB not ready')
       const t0 = nowMs()
-      const success = await register(source, employeeId, await getEmbeddingModel(), dbsRef.current)
+      const success = await register(source, employeeId, employeeName, await getEmbeddingModel(), dbsRef.current)
       const t1 = nowMs()
       setOutput(
         success
-          ? `Registered: ${employeeId.trim()}\nTime: ${(t1 - t0).toFixed(2)} ms`
+          ? `Registered: ${employeeId.trim()} - ${employeeName.trim()}\nTime: ${(t1 - t0).toFixed(2)} ms`
           : `Registration failed for: ${employeeId.trim()}`,
       )
     } catch (e: any) {
@@ -141,7 +142,9 @@ function AppContent() {
         lines.push(`Anti-spoof score: ${res.antiSpoofScore.toFixed(6)}`)
       } else if (res.matchedEmployeeId) {
         lines.push(`LIVE - Anti-spoof score: ${res.antiSpoofScore.toFixed(6)}`)
-        lines.push(`MATCH: ${res.matchedEmployeeId}`)
+        lines.push(
+          `MATCH: ${res.matchedEmployeeId}${res.matchedEmployeeName ? ` - ${res.matchedEmployeeName}` : ''}`,
+        )
         lines.push(`Confidence (cosine): ${res.matchScore.toFixed(6)}`)
       } else {
         lines.push(`LIVE - Anti-spoof score: ${res.antiSpoofScore.toFixed(6)}`)
@@ -164,13 +167,214 @@ function AppContent() {
     try {
       setLoading(true)
       setOutput('')
-      const EMBED_SIZE = 192
-      const entries: EmbeddingEntry[] = [
-        { employee_id: 'EMP001', embedding: Float32Array.from({ length: EMBED_SIZE }, (_, i) => Math.sin(i * 0.1)) },
-        { employee_id: 'EMP002', embedding: Float32Array.from({ length: EMBED_SIZE }, (_, i) => Math.cos(i * 0.1)) },
-        { employee_id: 'EMP003', embedding: Float32Array.from({ length: EMBED_SIZE }, (_, i) => Math.sin(i * 0.2 + 1)) },
-        { employee_id: 'EMP004', embedding: Float32Array.from({ length: EMBED_SIZE }, (_, i) => Math.cos(i * 0.2 + 1)) },
-      ]
+      // const EMBED_SIZE = 192
+      // const entries: EmbeddingEntry[] = [
+      //   { employee_id: 'EMP001', embedding: Float32Array.from({ length: EMBED_SIZE }, (_, i) => Math.sin(i * 0.1)) },
+      //   { employee_id: 'EMP002', embedding: Float32Array.from({ length: EMBED_SIZE }, (_, i) => Math.cos(i * 0.1)) },
+      //   { employee_id: 'EMP003', embedding: Float32Array.from({ length: EMBED_SIZE }, (_, i) => Math.sin(i * 0.2 + 1)) },
+      //   { employee_id: 'EMP004', embedding: Float32Array.from({ length: EMBED_SIZE }, (_, i) => Math.cos(i * 0.2 + 1)) },
+      // ]
+    const entries: EmbeddingEntry[] = [
+        {
+    employee_id: "69cbe418e8ce0577f8278c00",
+    embedding:Float32Array.from( [
+      -0.0015500792,
+      0.01253964,
+      -0.008538847,
+      0.0006451485,
+      -0.0052178735,
+      -0.06745018,
+      -0.019153796,
+      0.26218638,
+      0.020670898,
+      -0.08711924,
+      -0.009701881,
+      -0.0058525805,
+      0.004905904,
+      -0.00662194,
+      0.0017446314,
+      -0.00062485883,
+      -0.019725092,
+      0.00023275081,
+      -0.0012747974,
+      0.014825142,
+      -0.018502763,
+      -0.04622005,
+      0.16319153,
+      0.0050161756,
+      -0.06763218,
+      -0.015610468,
+      -0.008234993,
+      -0.13287662,
+      0.071108535,
+      0.07645596,
+      0.009394827,
+      0.22524439,
+      0.01506006,
+      0.00018484723,
+      0.062323675,
+      0.076284796,
+      0.116910905,
+      0.02947629,
+      -0.005142543,
+      -0.04733629,
+      0.008247777,
+      -0.0014470431,
+      0.003865168,
+      -0.0021380396,
+      0.004678268,
+      0.007896302,
+      0.01930897,
+      -0.02161089,
+      0.014846997,
+      0.029573187,
+      0.050922535,
+      -0.00090793945,
+      -0.113487296,
+      0.0016380806,
+      -0.07753811,
+      0.006803944,
+      -0.20861815,
+      0.0017747029,
+      -0.009129679,
+      -0.011811173,
+      -0.01642882,
+      0.0155624505,
+      -0.09742563,
+      0.03815024,
+      -0.012850467,
+      -0.23232804,
+      0.0021769586,
+      0.013156879,
+      0.008130944,
+      -0.000050172574,
+      -0.0036031597,
+      -0.2426815,
+      0.05244423,
+      0.010868204,
+      0.034146443,
+      -0.015700078,
+      0.0032598723,
+      0.0016658329,
+      0.10685359,
+      0.1339485,
+      -0.000638701,
+      0.03184817,
+      0.00094813004,
+      -0.092865415,
+      0.17911722,
+      0.0025331376,
+      -0.001772771,
+      0.08135336,
+      -0.054283526,
+      0.13005322,
+      -0.000099008495,
+      -0.0005335378,
+      0.0009925268,
+      0.0050428794,
+      -0.31121066,
+      -0.15568626,
+      0.042574927,
+      -0.0875466,
+      -0.004051912,
+      0.043004915,
+      -0.00036088983,
+      0.0009014315,
+      0.0058125914,
+      -0.005819072,
+      0.011355951,
+      0.0032073562,
+      0.039031282,
+      -0.0026993204,
+      0.008241057,
+      0.003136816,
+      0.10981322,
+      0.008718693,
+      0.004545552,
+      -0.1779465,
+      0.004348088,
+      -0.01602563,
+      -0.001145692,
+      -0.012709044,
+      0.013635689,
+      0.08746161,
+      0.023311617,
+      -0.017183322,
+      0.16524708,
+      -0.0033810274,
+      0.0022002964,
+      0.0026016932,
+      -0.005466157,
+      0.0071568517,
+      -0.011715121,
+      -0.037491444,
+      0.0041204174,
+      0.006517848,
+      0.0008922517,
+      0.009710372,
+      -0.07549554,
+      -0.004447402,
+      0.09453545,
+      -0.089689136,
+      0.013827985,
+      -0.013988648,
+      0.005459284,
+      -0.009477636,
+      -0.007389799,
+      0.11780365,
+      -0.09059398,
+      -0.26086286,
+      -0.005000057,
+      -0.0039515533,
+      -0.002712123,
+      -0.0053985924,
+      -0.015266337,
+      -0.03309927,
+      0.09840424,
+      0.005638824,
+      -0.0038673934,
+      -0.0032309403,
+      0.012303794,
+      -0.013590534,
+      0.04982793,
+      0.002179162,
+      0.011064828,
+      0.000026508724,
+      0.015555271,
+      0.0021645932,
+      -0.00014981668,
+      -0.0039579887,
+      -0.010829519,
+      0.04708852,
+      -0.00024044035,
+      -0.006535105,
+      -0.15495683,
+      -0.052276306,
+      -0.0023705969,
+      -0.065597154,
+      0.02227175,
+      0.003377504,
+      -0.0021568472,
+      0.015229301,
+      -0.000019895297,
+      -0.00288859,
+      0.15047614,
+      -0.044096027,
+      0.0025812315,
+      0.00044806543,
+      0.1508767,
+      -0.06270592,
+      0.0033505587,
+      -0.013327917,
+      -0.21763289,
+      0.077397086,
+      -0.0049802335,
+      0.00007124447
+    ])
+    },]
+
+
+
       const ok = await createEmployeesDb(entries)
       if (ok) {
         setOutput(`Created employees DB with ${entries.length} dummy entries:\n${entries.map(e => e.employee_id).join(', ')}`)
@@ -198,7 +402,7 @@ function AppContent() {
         const rows = result as any[]
         setOutput(
           rows
-            .map((r) => `#${r.id}  ${r.employee_id}  (saved: ${new Date(r.created_at).toLocaleString()})`)
+            .map((r) => `#${r.id}  ${r.employee_id} - ${r.employee_name}  (saved: ${new Date(r.created_at).toLocaleString()})`)
             .join('\n'),
         )
       } else {
@@ -207,7 +411,10 @@ function AppContent() {
           rows
             .map((r) => {
               const live = r.is_live === 1 ? 'LIVE' : 'SPOOF'
-              const matched = r.matched === 1 ? `MATCH (${r.employee_id ?? 'UNKNOWN'})` : 'NO MATCH'
+              const matched =
+                r.matched === 1
+                  ? `MATCH (${r.employee_id ?? 'UNKNOWN'}${r.employee_name ? ` - ${r.employee_name}` : ''})`
+                  : 'NO MATCH'
               const ago = r.time_diff_seconds != null ? formatTimeDiff(r.time_diff_seconds) : ''
               return `#${r.id}  ${r.operation}  ${live}  spoof=${Number(r.anti_spoof_score).toFixed(4)}  ${matched}  cosine=${r.match_score == null ? '-' : Number(r.match_score).toFixed(4)}  ${ago}`
             })
@@ -253,6 +460,13 @@ function AppContent() {
           placeholder="e.g., 1001"
           style={styles.input}
           autoCapitalize="none"
+        />
+        <Text style={styles.label}>Employee Name</Text>
+        <TextInput
+          value={employeeName}
+          onChangeText={setEmployeeName}
+          placeholder="e.g., Mena Adel"
+          style={styles.input}
         />
         <View style={styles.buttonWrap}>
           <Button

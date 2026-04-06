@@ -8,6 +8,7 @@ export type ClockInOutResult = {
   embeddingsOk: boolean
   spoofOk: boolean
   matchedEmployeeId: string | null
+  matchedEmployeeName: string | null
   antiSpoofScore: number
   matchScore: number
 }
@@ -15,15 +16,18 @@ export type ClockInOutResult = {
 export async function register(
   imageSource: any,
   employeeId: string,
+  employeeName: string,
   embedModel: TensorflowModel,
   dbs: AppDbs,
 ): Promise<boolean> {
-  const trimmed = employeeId.trim()
-  if (!trimmed) throw new Error('Employee ID is required')
+  const trimmedId = employeeId.trim()
+  const trimmedName = employeeName.trim()
+  if (!trimmedId) throw new Error('Employee ID is required')
+  if (!trimmedName) throw new Error('Employee name is required')
 
-  const img = await resolveImageToLocalUri(imageSource, `reg_${trimmed}`)
+  const img = await resolveImageToLocalUri(imageSource, `reg_${trimmedId}`)
   const embedding = await getEmbeddings(img, embedModel)
-  const saved = await saveEmbedding(dbs.employeesDb, trimmed, embedding)
+  const saved = await saveEmbedding(dbs.employeesDb, trimmedId, trimmedName, embedding)
   // TODO: save_embeddings_to_cloud() --> omar
   return saved
 }
@@ -97,6 +101,7 @@ export async function clockInOut(
   // 4. Save operation
   await saveOperation(dbs.operationsDb, {
     employee_id: match.employeeId,
+    employee_name: match.employeeName,
     operation,
     is_live: true,
     anti_spoof_score: spoof.score,
@@ -109,6 +114,7 @@ export async function clockInOut(
     embeddingsOk: true,
     spoofOk: true,
     matchedEmployeeId: match.employeeId,
+    matchedEmployeeName: match.employeeName,
     antiSpoofScore: spoof.score,
     matchScore: match.score,
   }
