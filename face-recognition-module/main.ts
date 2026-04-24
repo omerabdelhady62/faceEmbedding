@@ -7,6 +7,7 @@ import { resolveImageToLocalUri } from './utils'
 export type ClockInOutResult = {
   embeddingsOk: boolean
   spoofOk: boolean
+  isSpoof: boolean
   matchedEmployeeId: string | null
   matchedEmployeeName: string | null
   antiSpoofScore: number
@@ -113,6 +114,7 @@ export async function clockInOut(
   return {
     embeddingsOk: true,
     spoofOk: true,
+    isSpoof: !spoof.isLive,
     matchedEmployeeId: match.employeeId,
     matchedEmployeeName: match.employeeName,
     antiSpoofScore: spoof.score,
