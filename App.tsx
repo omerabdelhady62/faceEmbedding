@@ -117,7 +117,7 @@ function AppContent() {
 
   // --- Clock-in/out flow ---
   const demoClockInOut = async () => {
-    const source = require('./assets/mena.jpeg')
+    const source = require('./assets/multiple-faces.jpg')
     try {
       setLoading(true)
       setOutput('')

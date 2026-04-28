@@ -175,6 +175,7 @@ export async function getEmbeddings(
     performanceMode: 'fast',
   });
   if (!faces || faces.length === 0) throw new Error(`No face detected: ${localFileUri}`);
+  if (faces.length > 1) throw new Error(`Multiple faces detected: ${faces.length}`);
   const frame = faces[0]?.frame;
   if (!frame) throw new Error(`Face bbox missing: ${localFileUri}`);
 
