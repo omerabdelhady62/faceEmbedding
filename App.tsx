@@ -117,7 +117,7 @@ function AppContent() {
 
   // --- Clock-in/out flow ---
   const demoClockInOut = async () => {
-    const source = require('./assets/multiple-faces.jpg')
+    const source = require('./assets/ana2.jpeg')
     try {
       setLoading(true)
       setOutput('')
@@ -129,7 +129,7 @@ function AppContent() {
         await getEmbeddingModel(),
         await getAntiSpoofModel(),
         dbsRef.current,
-        { matchThreshold: 0.6, liveThreshold: 0.2 },
+        { matchThreshold: 0.6, liveThreshold: 0.03 },
       )
       const t1 = nowMs()
 
@@ -137,16 +137,22 @@ function AppContent() {
 
       if (!res.embeddingsOk) {
         lines.push('Face detection FAILED (no face found)')
+      } else if (res.isSpoof) {
+        lines.push('Spoof: YES')
+        lines.push('NOT LIVE (spoof detected)')
+        lines.push(`Anti-spoof score: ${res.antiSpoofScore.toFixed(6)}`)
       } else if (!res.spoofOk) {
         lines.push('NOT LIVE (spoof detected)')
         lines.push(`Anti-spoof score: ${res.antiSpoofScore.toFixed(6)}`)
       } else if (res.matchedEmployeeId) {
+        lines.push('Spoof: NO')
         lines.push(`LIVE - Anti-spoof score: ${res.antiSpoofScore.toFixed(6)}`)
         lines.push(
           `MATCH: ${res.matchedEmployeeId}${res.matchedEmployeeName ? ` - ${res.matchedEmployeeName}` : ''}`,
         )
         lines.push(`Confidence (cosine): ${res.matchScore.toFixed(6)}`)
       } else {
+        lines.push('Spoof: NO')
         lines.push(`LIVE - Anti-spoof score: ${res.antiSpoofScore.toFixed(6)}`)
         lines.push('NO MATCH (unknown employee)')
         if (res.matchScore >= 0) lines.push(`Best cosine: ${res.matchScore.toFixed(6)}`)
